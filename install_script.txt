@@ -1,0 +1,101 @@
+#!/bin/bash
+apt-get -y install apache2 mariadb-server libapache2-mod-php7.0
+apt-get -y install php7.0-gd php7.0-json php7.0-mysql php7.0-curl php7.0-mbstring
+apt-get -y install php 7.0-intl php7.0-mcrypt php-imagick php7.0-xml php7.0-zip
+apt-get -y install unzip
+
+wget https://download.nextcloud.com/server/releases/latest.zip
+wget https://download.nextcloud.com/server/releases/latest.zip.sha256
+
+if [[ $(sha256sum -c latest.zip.sha256 < latest.zip) = "latest.zip: OK" ]]; then
+        echo "CHECKSUM ACCEPTED" && unzip latest.zip
+        else echo "CHECKSUM FAILED"
+fi
+
+mv nextcloud /var/www
+rm latest.zip latest.zip.sha256
+
+cat > /etc/apache2/sites-available/nextcloud.conf<<- "EOF"
+<VirtualHost *:80>
+	
+	RewriteEngine On
+        RewriteCond %{SERVER_PORT} !^443$
+        RewriteRule (.*) https://%{HTTP_HOST}/$1 [R=301,L]
+
+        <Directory /var/www/nextcloud/>
+                Options +FollowSymlinks
+                AllowOverride All
+                Satisfy Any
+                <IfModule mod_dav.c>
+                        Dav off
+                </IfModule>
+
+                SetEnv HOME /var/www/nextcloud
+                SetEnv HTTP_HOME /var/www/nextcloud
+        </Directory>
+</VirtualHost>
+EOF
+
+ln -s /etc/apache2/sites-available/nextcloud.conf /etc/apache2/sites-enabled/nextcloud.conf
+rm /etc/apache2/sites-available/000-default.conf
+cat > /etc/apache2/sites-available/000-default.conf <<- "EOF"
+<VirtualHost *:80>
+	<Directory /var/www/nextcloud>
+		AllowOverride All
+	</Directory>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/nextcloud
+
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+
+</VirtualHost>
+EOF
+
+rm /etc/apache2/sites-available/default-ssl.conf
+cat > /etc/apache2/sites-available/default-ssl.conf <<- "EOF"
+<IfModule mod_ssl.c>
+    <VirtualHost *:443>
+    ServerAdmin webmaster@localhost
+	
+	SSLEngine on
+	SSLProtocoll All -SSLv2 -SSLv3
+	SSLCertificateFile
+	SSLCertificateKeyFile
+    DocumentRoot /var/www/nextcloud
+		ErrorLog ${APACHE_LOG_DIR}/error.log
+        CustomLog ${APACHE_LOG_DIR}/access.log combined
+		<FilesMatch "\.(cgi|shtml|phtml|php)$">
+            SSLOptions +StdEnvVars
+        </FilesMatch>
+			<Directory /usr/lib/cgi-bin>
+                SSLOptions +StdEnvVars
+            </Directory>
+        </VirtualHost>
+</IfModule>
+EOF
+a2enmod rewrite
+a2enmod headers
+a2enmod env
+a2enmod dir
+a2enmod mime
+
+service apache2 restart
+
+echo "Please enter a new database user name"
+read UNAME
+echo "Please enter a new database password"
+read UPASS
+echo "Please enter a new database name"
+read DNAME
+mysql -u root -p <<EOF
+create database $DNAME;
+create user '$UNAME@localhost' identified by '$UPASS';
+grant all on $DNAME.* to '$UNAME@localhost';
+EOF
+
+
+chown -R www-data:www-data /var/www/nextcloud
+#cd /var/www/nextcloud
+#sudo -u www-data php occ maintenance:install --database "mysql" --database-name "nextcloud" --database-user "root" --database-pass "password" --admin-user "admin" --admin-pass "password"
+
